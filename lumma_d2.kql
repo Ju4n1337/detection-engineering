@@ -1,0 +1,203 @@
+// =====================================================================================
+//  Lumma Stealer (+ ClickFix / CastleLoader delivery)  |  KQL hunting pack
+//  Generated: 2026-11-02          Lookback default: 30d (Advanced Hunting retention limit)
+//  Basis: Huntress 2026-10-21, Microsoft Threat Intelligence via The Hacker News 2026-03-06,
+//         Bitdefender via BleepingComputer 2026-02-11, Hunter Strategy 2026-02-18.
+//  NOTE: Syntax reviewed manually; NOT executed against a live tenant. Validate schema first.
+//  Run each numbered block as a separate query.
+//  Complements clickfix_sudamerica.kql (Q1/Q2 there cover RunMRU and Explorer/Terminal shells).
+// =====================================================================================
+
+
+// -------------------------------------------------------------------------------------
+// L1  [IoC]  Network contact with Oct-2026 Amazon-themed ClickFix / stealer infrastructure
+//     MITRE: T1071, T1105
+// -------------------------------------------------------------------------------------
+let IOC_Domains = dynamic([
+    "grillmasterchef.com", "kiriosyka.com", "liokida.com", "grillrecipespro.com",
+    "perfectgrillrecipes.com", "thegrilljournal.com", "homelygrill.com", "embersandbites.com",
+    "advancedfences.com", "ashevilleroofingcontractor.com"
+]);
+let IOC_IPs = dynamic(["167.148.201.106"]);
+DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where RemoteIP in (IOC_IPs) or RemoteUrl has_any (IOC_Domains)
+| project Timestamp, DeviceName, ActionType, RemoteIP, RemotePort, RemoteUrl,
+          InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// L2  [Behavior]  finger.exe abuse (command line and TCP/79 egress)
+//     Rare on endpoints; Huntress campaign delivers its script in a remote .plan file.
+//     MITRE: T1218, T1105
+// -------------------------------------------------------------------------------------
+union
+(
+    DeviceProcessEvents
+    | where Timestamp > ago(30d)
+    | where FileName =~ "finger.exe"
+    | project Timestamp, DeviceName, Signal = "Process", Detail = ProcessCommandLine,
+              Parent = InitiatingProcessFileName, ParentCmd = InitiatingProcessCommandLine
+),
+(
+    DeviceNetworkEvents
+    | where Timestamp > ago(30d)
+    | where InitiatingProcessFileName =~ "finger.exe"
+    | project Timestamp, DeviceName, Signal = "Network", Detail = strcat(RemoteIP, ":", tostring(RemotePort), " ", RemoteUrl),
+              Parent = InitiatingProcessFileName, ParentCmd = InitiatingProcessCommandLine
+)
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// L3  [Behavior]  Windows Terminal (Win+X, I) shell with a long hex-encoded blob
+//     Microsoft (Feb 2026): victim pastes a hex-encoded, XOR-compressed command into wt.exe.
+//     MITRE: T1204.004, T1027, T1059.001
+// -------------------------------------------------------------------------------------
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where FileName in~ ("powershell.exe", "pwsh.exe", "cmd.exe")
+| where InitiatingProcessFileName in~ ("WindowsTerminal.exe", "wt.exe", "OpenConsole.exe")
+| where ProcessCommandLine matches regex @"[0-9A-Fa-f]{200,}"
+| project Timestamp, DeviceName, AccountName, FileName,
+          Cmd = substring(ProcessCommandLine, 0, 300), InitiatingProcessFileName, InitiatingProcessParentFileName
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// L4  [Behavior]  Renamed 7-Zip extracting a payload launched from PowerShell
+//     Microsoft chain: PowerShell downloads a ZIP plus a renamed legitimate 7-Zip with a random name.
+//     MITRE: T1036.003, T1140
+// -------------------------------------------------------------------------------------
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where ProcessVersionInfoOriginalFileName in~ ("7z.exe", "7za.exe", "7zr.exe")
+| where not(FileName in~ ("7z.exe", "7za.exe", "7zr.exe", "7zG.exe", "7zFM.exe"))
+| where InitiatingProcessFileName in~ ("powershell.exe", "pwsh.exe", "cmd.exe")
+| project Timestamp, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine,
+          InitiatingProcessCommandLine
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// L5  [Behavior | High value]  MSBuild.exe started by a batch with /launched, or MSBuild making internet connections
+//     Microsoft chain: cmd -> batch /launched -> MSBuild.exe -> blockchain RPC (EtherHiding).
+//     MITRE: T1127.001, T1102
+// -------------------------------------------------------------------------------------
+let msbuild_exec =
+    DeviceProcessEvents
+    | where Timestamp > ago(30d)
+    | where FileName =~ "MSBuild.exe"
+    | where InitiatingProcessCommandLine has "/launched"
+         or InitiatingProcessFileName in~ ("cmd.exe", "wscript.exe", "cscript.exe")
+    | where not(FolderPath has_any (@"\Microsoft Visual Studio\", @"\dotnet\"))
+    | project Timestamp, DeviceName, Signal = "MSBuildStart", Detail = ProcessCommandLine,
+              Parent = InitiatingProcessCommandLine;
+let msbuild_net =
+    DeviceNetworkEvents
+    | where Timestamp > ago(30d)
+    | where InitiatingProcessFileName =~ "MSBuild.exe"
+    | where ActionType == "ConnectionSuccess" and RemoteIPType == "Public"
+    | project Timestamp, DeviceName, Signal = "MSBuildNetwork", Detail = strcat(RemoteIP, ":", tostring(RemotePort), " ", RemoteUrl),
+              Parent = InitiatingProcessCommandLine;
+union msbuild_exec, msbuild_net
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// L6  [Behavior]  QueueUserAPC injection into browsers (Lumma credential theft)
+//     Microsoft chain injects into chrome.exe / msedge.exe, then reads Web Data and Login Data.
+//     Check which column holds the target process in your tenant: for remote-API events,
+//     FileName/ProcessId normally describe the TARGET and InitiatingProcess* the caller.
+//     MITRE: T1055.004, T1555.003
+// -------------------------------------------------------------------------------------
+DeviceEvents
+| where Timestamp > ago(30d)
+| where ActionType == "QueueUserApcRemoteApiCall"
+| where FileName in~ ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe")
+| where not(InitiatingProcessFileName in~ ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe"))
+| project Timestamp, DeviceName, TargetProcess = FileName, InjectingProcess = InitiatingProcessFileName,
+          InjectorPath = InitiatingProcessFolderPath, InjectorCmd = InitiatingProcessCommandLine
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// L7  [Behavior]  Microsoft Defender exclusions added right after a ClickFix-style launch
+//     Microsoft chain adds Defender exclusions. 7a registry, 7b PowerShell.
+//     MITRE: T1562.001
+// -------------------------------------------------------------------------------------
+// 7a
+DeviceRegistryEvents
+| where Timestamp > ago(30d)
+| where ActionType == "RegistryValueSet"
+| where RegistryKey has @"Windows Defender\Exclusions"
+| project Timestamp, DeviceName, RegistryKey, RegistryValueName,
+          InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+| order by Timestamp desc
+
+// 7b  (run as a separate query)
+// DeviceEvents
+// | where Timestamp > ago(30d) and ActionType == "PowerShellCommand"
+// | extend Cmd = tostring(parse_json(AdditionalFields).Command)
+// | where Cmd has "Add-MpPreference" and Cmd has_any ("ExclusionPath", "ExclusionProcess", "ExclusionExtension")
+// | project Timestamp, DeviceName, InitiatingProcessAccountName, Cmd = substring(Cmd, 0, 300)
+
+
+// -------------------------------------------------------------------------------------
+// L8  [Behavior]  CastleLoader-style persistence: Startup .url shortcut launching a script interpreter
+//     Bitdefender: AutoIt script copied to a persistence path, interpreter copied elsewhere, and an
+//     internet shortcut in Startup launches the interpreter with the script.
+//     MITRE: T1547.001
+// -------------------------------------------------------------------------------------
+DeviceFileEvents
+| where Timestamp > ago(30d)
+| where ActionType in ("FileCreated", "FileModified")
+| where FolderPath has @"\Start Menu\Programs\Startup"
+| where FileName endswith ".url"
+| where not(InitiatingProcessFileName in~ ("explorer.exe", "msiexec.exe"))
+| project Timestamp, DeviceName, FolderPath, FileName,
+          InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// L9  [Behavior]  Portable runtimes executing from ProgramData / Temp (Node.js, IronPython, AutoIt)
+//     Huntress chain: IronPython host ipyw32.exe from %TEMP% (ZIP saved as .pdf) and portable
+//     Node.js from C:\ProgramData\NodeView running an obfuscated index.js.
+//     MITRE: T1059.007, T1059.006, T1036
+// -------------------------------------------------------------------------------------
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where (FileName =~ "ipyw32.exe")
+     or (FileName =~ "node.exe" and FolderPath has @"\ProgramData\" and ProcessCommandLine has "index.js")
+     or (FileName in~ ("AutoIt3.exe", "AutoIt3_x64.exe") and FolderPath has_any (@"\AppData\", @"\Temp\", @"\ProgramData\"))
+     or (FolderPath has @"\ProgramData\Prodclear" and FileName =~ "Client32.exe")
+| project Timestamp, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine,
+          InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// L10 [Sentinel / ASIM]  IoC match across proxy, firewall and DNS sources
+// -------------------------------------------------------------------------------------
+let IOC_Domains = dynamic([
+    "grillmasterchef.com", "kiriosyka.com", "liokida.com", "grillrecipespro.com",
+    "perfectgrillrecipes.com", "thegrilljournal.com", "homelygrill.com", "embersandbites.com",
+    "advancedfences.com"
+]);
+let IOC_IPs = dynamic(["167.148.201.106"]);
+union
+(
+    _Im_NetworkSession(starttime = ago(30d), endtime = now(), dstipaddr_has_any_prefix = IOC_IPs)
+    | project TimeGenerated, Signal = "NetworkSession", SrcIpAddr, Indicator = tostring(DstIpAddr), EventProduct
+),
+(
+    _Im_WebSession(starttime = ago(30d), endtime = now(), url_has_any = IOC_Domains)
+    | project TimeGenerated, Signal = "WebSession", SrcIpAddr, Indicator = Url, EventProduct
+),
+(
+    _Im_Dns(starttime = ago(30d), endtime = now(), domain_has_any = IOC_Domains)
+    | project TimeGenerated, Signal = "Dns", SrcIpAddr, Indicator = DnsQuery, EventProduct
+)
+| order by TimeGenerated desc

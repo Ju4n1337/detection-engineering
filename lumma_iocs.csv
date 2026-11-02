@@ -1,0 +1,34 @@
+indicator,type,context,source,source_date,in_90d_window,region_focus,lumma_attribution,confidence,notes
+orders-amazon-com.advancedfences.com,domain,Malvertising landing (Google ad for "amazon business"),Huntress,2026-10-21,yes,Global (no regional targeting stated),"allegedly Lumma (Huntress hedges)",medium,Redirects to fake Amazon login on Google Sites then fake CAPTCHA
+sites.google.com/view/ch-pc/sign-in,url,Spoofed Amazon login on Google Sites,Huntress,2026-10-21,yes,Global,"allegedly Lumma",medium,Legit platform abused - block by path/URL not domain
+grillrecipespro.com,domain,finger.exe target (DLVBUCeFfF@grillrecipespro.com) TCP/79,Huntress,2026-10-21,yes,Global,"allegedly Lumma",high,.plan file carries the script; ~68 CRs pad output
+grillmasterchef.com,domain,Hosts stage 2 (timer6) and v6 (Doina loader),Huntress,2026-10-21,yes,Global,"allegedly Lumma",high,Path /90e4a147-1234-505c-a024-062e543b5df8/{timer6|v6}
+kiriosyka.com,domain,Hosts sqr-viewertr6 (Node.js runtime ZIP ~52MB),Huntress,2026-10-21,yes,Global,"allegedly Lumma",high,Earlier stealer payload source
+liokida.com,domain,Stealer payload source (sqr-viewertr6z),Huntress,2026-10-21,yes,Global,"allegedly Lumma",high,Embedded as string in stealer
+perfectgrillrecipes.com,domain,Stealer initial HTTPS POST check-in,Huntress,2026-10-21,yes,Global,"allegedly Lumma",high,Sends hostname/username; then WebSocket heartbeat
+thegrilljournal.com,domain,Stealer exfiltration,Huntress,2026-10-21,yes,Global,"allegedly Lumma",high,
+homelygrill.com,domain,Stealer exfiltration,Huntress,2026-10-21,yes,Global,"allegedly Lumma",high,
+embersandbites.com,domain,Campaign infrastructure (theme-matched),Huntress,2026-10-21,yes,Global,"allegedly Lumma",medium,Role not detailed in post
+ashevilleroofingcontractor.com,domain,macOS payload URL (offline during analysis),Huntress,2026-10-21,yes,Global,n/a (macOS),low,Payload not recovered
+167.148.201.106,ipv4,Pirated NetSupport Client C2 on TCP/725 (/fakeurl.htm),Huntress,2026-10-21,yes,Global,n/a (NetSupport RMM),high,
+d864b28c302db9ed10baf8def0fb26bac0b97d27349d22c4e9390d30fce54649,sha256,timer6 (obfuscated Python stage 2),Huntress,2026-10-21,yes,Global,"allegedly Lumma",high,
+891cc3ca2d29e9b185a8913e93810f48859d2be1f23ddd977a15cdbeed509e0e,sha256,v6 RC4-decrypted (Doina),Huntress,2026-10-21,yes,Global,"allegedly Lumma",high,
+87a047160eb1a9b92e6ede511252dfc624b0f5a7185ac2cec1c7ebde8cdf4eea,sha256,index.js (Node.js loader),Huntress,2026-10-21,yes,Global,"allegedly Lumma",high,
+035d396b3a329f59d680dc36a0a639eb7fb306bea97e42f5f53293dce817e8b7,sha256,Nodeview.zip,Huntress,2026-10-21,yes,Global,"allegedly Lumma",high,
+24a293a662600b2292d9259baebba1c09b41df82a5c9c20f8572625ae759696f,sha256,Lumma .tmp (AES-256-GCM encrypted) 754224f2-...,Huntress,2026-10-21,yes,Global,"allegedly Lumma",medium,Huntress table repeats one Lumma hash; verify against original
+b8419a676a3d4af04ea98287a2b85052fae5c06e6278ca9d8bfa4b5b396b39a6,sha256,Lumma .tmp 1572cef1-...,Huntress,2026-10-21,yes,Global,"allegedly Lumma",medium,
+42527a4388ef4ade6f4eaf52706f0ab31cb4e9ced3a56a6b15402551f9f01208,sha256,Lumma .tmp 29d37679-...,Huntress,2026-10-21,yes,Global,"allegedly Lumma",medium,
+408b7fc4f08f2a9044046025f05995e8cbd5c96c39844aaa8a7eb8ee4697ea89,sha256,Lumma .tmp 545b93c2-...,Huntress,2026-10-21,yes,Global,"allegedly Lumma",medium,
+C:\ProgramData\NodeView,file_path,Portable Node.js runtime + obfuscated index.js,Huntress,2026-10-21,yes,Global,"allegedly Lumma",high,
+C:\ProgramData\Prodclear,file_path,Pirated NetSupport Client (Client32.exe),Huntress,2026-10-21,yes,Global,n/a (NetSupport RMM),high,
+ipyw32.exe,file_name,IronPython host; ZIP saved to %TEMP% with .pdf extension,Huntress,2026-10-21,yes,Global,"allegedly Lumma",high,Fetched from github.com/IronLanguages/ironpython3 v3.4.2 (legit repo abused)
+79/tcp,port,finger.exe egress,Huntress,2026-10-21,yes,Global,n/a,medium,Rare on endpoints; strong when initiator is finger.exe
+725/tcp,port,NetSupport C2,Huntress,2026-10-21,yes,Global,n/a,medium,
+cloudflare.report,domain,ClickFix variant C2 (net use WebDAV chain),Atos via PR #29 (ARPSyndicate),2026-03-06 / 2026-10-28,yes (re-listed),Global,NOT confirmed – Atos does not mention Lumma,medium,Final payload never recovered; PR pairs it with a Lumma v6 report but Atos names no Lumma link
+144.31.165.173,ipv4,C2 origin for cloudflare.report,Atos via PR #29,2026-03-06 / 2026-10-28,yes (re-listed),Global,NOT confirmed,medium,
+happyglamper.ro,domain,Fake CAPTCHA lure (Win+R -> net use Z:),Atos,2026-03-06,no,Global,NOT confirmed,medium,PR #29 baseline lists it as ADWARE_TRACKER
+94.156.170.255,ipv4,WebDAV/ZIP staging host (flowy.zip),Atos,2026-03-06,no,Global,NOT confirmed,medium,PR #29 describes it as staging not C2
+%LOCALAPPDATA%\MyApp\WorkFlowy.exe,file_path,Trojanized WorkFlowy Electron app (malicious app.asar/main.js),Atos,2026-03-06,no,Global,NOT confirmed,medium,
+%APPDATA%\id.txt,file_path,Victim ID written by trojanized app,Atos,2026-03-06,no,Global,NOT confirmed,medium,
+a390fe045f50a0697b14160132dfa124c7f92d85c18fba07df351c2fcfc11063,sha256,Malicious app.asar,Atos,2026-03-06,no,Global,NOT confirmed,medium,
+dc95f7c7fb98ec30d3cb03963865a11d1b7b696e34f163b8de45f828b62ec829,sha256,Malicious main.js,Atos,2026-03-06,no,Global,NOT confirmed,medium,
