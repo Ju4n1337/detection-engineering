@@ -1,0 +1,261 @@
+// =====================================================================================
+//  ClickFix – Sudamérica / LATAM  |  KQL hunting pack (Microsoft Defender XDR + Sentinel)
+//  Generated: 2026-11-02          Lookback default: 30d (Advanced Hunting retention limit)
+//  Basis: public reporting (Zscaler SmartRAT 2026-06-17, SANS ISC 2026-10-28, Microsoft
+//         ClickFix/CrashFix/TerminalFix research, Huntress finger.exe 2026-10).
+//  NOTE: Syntax reviewed manually; NOT executed against a live tenant. Run each query once
+//        in Advanced Hunting / Log Analytics to confirm schema before turning into a rule.
+//  Run each numbered block as a separate query.
+// =====================================================================================
+
+
+// -------------------------------------------------------------------------------------
+// Q1  [Behavior | High value]  Run dialog (Win+R) abuse – suspicious command stored in RunMRU
+//     ClickFix pastes the clipboard into Run; Windows records it in RunMRU.
+//     MITRE: T1204.004, T1059.001
+// -------------------------------------------------------------------------------------
+DeviceRegistryEvents
+| where Timestamp > ago(30d)
+| where ActionType == "RegistryValueSet"
+| where RegistryKey has @"Explorer\RunMRU"
+| where RegistryValueData has_any ("powershell", "pwsh", "mshta", "cmd /c", "cmd.exe /c", "curl", "bitsadmin", "wscript", "cscript", "finger")
+| where RegistryValueData matches regex @"(?i)(iex|invoke-expression|irm|iwr|invoke-restmethod|invoke-webrequest|downloadstring|frombase64string|https?://|\s-e(nc|ncodedcommand)?\s)"
+| project Timestamp, DeviceName, AccountName = InitiatingProcessAccountName,
+          RegistryValueName, RegistryValueData, InitiatingProcessFileName
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// Q2  [Behavior | High value]  Explorer-launched shell with a download/exec cradle
+//     Leg 1: Win+R  -> explorer.exe -> powershell/cmd/mshta
+//     Leg 2: Win+X, I (TerminalFix/Windows Terminal variant) -> explorer -> WindowsTerminal -> shell
+//     Tuning: exclude IT automation accounts / known admin scripts via the `where not` line.
+//     MITRE: T1204.004, T1059.001, T1218.005
+// -------------------------------------------------------------------------------------
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where FileName in~ ("powershell.exe", "pwsh.exe", "cmd.exe", "mshta.exe")
+| where InitiatingProcessFileName =~ "explorer.exe"
+     or (InitiatingProcessFileName in~ ("WindowsTerminal.exe", "wt.exe", "OpenConsole.exe")
+         and InitiatingProcessParentFileName =~ "explorer.exe")
+| where ProcessCommandLine matches regex @"(?i)((iex|invoke-expression)\s*\(?\s*(irm|iwr|invoke-restmethod|invoke-webrequest)|downloadstring|downloadfile|frombase64string|\s-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{40,}|mshta(\.exe)?\s+https?://|bitsadmin.*/transfer)"
+| where ProcessCommandLine has_any ("http://", "https://") or ProcessCommandLine matches regex @"(?i)\s-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{40,}"
+// | where not (InitiatingProcessAccountName in~ ("svc_automation"))   // tune here
+| extend LaunchPath = iff(InitiatingProcessFileName =~ "explorer.exe", "Run dialog / Explorer", "Windows Terminal (Win+X)")
+| extend BareIpInCmd = ProcessCommandLine matches regex @"https?://\d{1,3}(\.\d{1,3}){3}"
+| project Timestamp, DeviceName, AccountName, LaunchPath, FileName, ProcessCommandLine, BareIpInCmd,
+          InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by BareIpInCmd desc, Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// Q3  [IoC]  Network contact with campaign infrastructure (MDE)
+//     Lists: SmartRAT (Brazil, Zscaler 2026-06) | Oct-2026 fake-Cloudflare (SANS ISC)
+//            | REF6045 Mexico bank-fraud kit (Elastic, regional context)
+//     IoC age: SmartRAT infra is >130 days old – treat hits as "past exposure" triage.
+// -------------------------------------------------------------------------------------
+let IOC_IPs = dynamic([
+    "64.95.13.238",        // SmartRAT staging (st.txt / payload.php)
+    "162.141.111.227",     // SmartRAT fallback C2 (TCP/51888)
+    "68.211.161.46",       // REF6045 ClickFix/file host (Mexico)
+    "216.250.112.100"      // REF6045 ClickFix/file host (Mexico)
+    // "144.126.140.33"    // low confidence – unvalidated community pulse (Brazil); enable after review
+]);
+let IOC_Domains = dynamic([
+    "windowsupdate-cdn.com",   // SmartRAT C2 (c.windowsupdate-cdn.com)
+    "cartaobb.com", "crefisa.online", "vfsgloball.net",   // SmartRAT lure domains
+    "js-static.cfd", "api-com.cfd", "cf-id.com",          // Oct-2026 fake Cloudflare chain
+    "ratonvaquero2026.online", "monteviral2026.duckdns.org", "osogransd.online", "ssinvestigaciones.com"  // REF6045
+]);
+DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where RemoteIP in (IOC_IPs) or RemoteUrl has_any (IOC_Domains)
+| project Timestamp, DeviceName, ActionType, RemoteIP, RemotePort, RemoteUrl,
+          InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// Q4  [Behavior]  PowerShell talking raw TCP on 51888 (SmartRAT C2 port)
+//     Port alone is weak; the PowerShell initiator is what makes it useful.
+//     MITRE: T1071, T1059.001
+// -------------------------------------------------------------------------------------
+DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where RemotePort == 51888
+| where InitiatingProcessFileName in~ ("powershell.exe", "pwsh.exe")
+| project Timestamp, DeviceName, RemoteIP, RemotePort, RemoteUrl,
+          InitiatingProcessCommandLine, InitiatingProcessAccountName
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// Q5  [IoC/Host]  SmartRAT host artifacts: files, Run key, scheduled task, service
+//     "MicrosoftEdgeUpdateCore" masquerades as an Edge updater; legitimate Edge update tasks are
+//     named MicrosoftEdgeUpdateTaskMachine*/edgeupdate*, so this exact name is suspicious.
+//     MITRE: T1543.003, T1053.005, T1547.001, T1036
+// -------------------------------------------------------------------------------------
+let files =
+    DeviceFileEvents
+    | where Timestamp > ago(30d)
+    | where (FolderPath has @"Microsoft\Diagnosis\ETW" and FileName in~ ("msedgeupdate.txt", "client_debug.log", "etw.dat", "install.token"))
+         or (FolderPath has @"\Users\Public\Documents" and FileName =~ "msedge.txt")
+    | project Timestamp, DeviceName, Signal = "File", Detail = strcat(FolderPath, @"\", FileName), Actor = InitiatingProcessCommandLine;
+let runkey =
+    DeviceRegistryEvents
+    | where Timestamp > ago(30d)
+    | where RegistryKey has @"CurrentVersion\Run" and RegistryValueName =~ "MicrosoftEdgeUpdateCore"
+    | project Timestamp, DeviceName, Signal = "RunKey", Detail = RegistryValueData, Actor = InitiatingProcessCommandLine;
+let tasks =
+    DeviceEvents
+    | where Timestamp > ago(30d)
+    | where ActionType in ("ScheduledTaskCreated", "ServiceInstalled")
+    | where tostring(AdditionalFields) has "MicrosoftEdgeUpdateCore"
+    | project Timestamp, DeviceName, Signal = ActionType, Detail = tostring(AdditionalFields), Actor = InitiatingProcessCommandLine;
+let cmdline =
+    DeviceProcessEvents
+    | where Timestamp > ago(30d)
+    | where ProcessCommandLine has "MicrosoftEdgeUpdateCore"
+    | where FileName in~ ("schtasks.exe", "sc.exe", "powershell.exe", "pwsh.exe")
+    | project Timestamp, DeviceName, Signal = "CmdLine", Detail = ProcessCommandLine, Actor = InitiatingProcessCommandLine;
+union files, runkey, tasks, cmdline
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// Q6  [Behavior | Correlation]  Explorer-launched PowerShell that then compiles C# or installs persistence
+//     SmartRAT compiles inline C# with csc.exe and creates a task/service within seconds.
+//     Joins on parent PID + creation time to avoid PID-reuse false matches.
+//     MITRE: T1059.001, T1027.004, T1053.005, T1543.003
+// -------------------------------------------------------------------------------------
+let ClickFixShell =
+    DeviceProcessEvents
+    | where Timestamp > ago(30d)
+    | where FileName in~ ("powershell.exe", "pwsh.exe")
+    | where InitiatingProcessFileName =~ "explorer.exe"
+    | project DeviceId, DeviceName, ShellStart = Timestamp, ShellPid = ProcessId,
+              ShellCreated = ProcessCreationTime, ShellCmd = ProcessCommandLine;
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where FileName in~ ("csc.exe", "schtasks.exe", "sc.exe")
+| where InitiatingProcessFileName in~ ("powershell.exe", "pwsh.exe")
+| join kind=inner ClickFixShell on DeviceId,
+      $left.InitiatingProcessId == $right.ShellPid,
+      $left.InitiatingProcessCreationTime == $right.ShellCreated
+| where Timestamp between (ShellStart .. ShellStart + 15m)
+| summarize Children = make_set(FileName), ChildCmds = make_set(ProcessCommandLine, 10),
+            FirstChild = min(Timestamp) by DeviceName, ShellStart, ShellCmd
+| order by ShellStart desc
+
+
+// -------------------------------------------------------------------------------------
+// Q7  [Behavior]  finger.exe used as a ClickFix LOLBin (CrashFix / Amazon-themed campaign, Oct 2026)
+//     7a: command-line form  finger user@host   |   7b: TCP/79 egress from finger.exe
+//     MITRE: T1218, T1105
+// -------------------------------------------------------------------------------------
+// 7a
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where FileName =~ "finger.exe"
+| where ProcessCommandLine matches regex @"(?i)finger(\.exe)?\s+\S+@\S+"
+| project Timestamp, DeviceName, AccountName, ProcessCommandLine,
+          InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by Timestamp desc
+
+// 7b  (run as a separate query)
+// DeviceNetworkEvents
+// | where Timestamp > ago(30d)
+// | where InitiatingProcessFileName =~ "finger.exe" and RemotePort == 79
+// | project Timestamp, DeviceName, RemoteIP, RemoteUrl, InitiatingProcessCommandLine
+
+
+// -------------------------------------------------------------------------------------
+// Q8  [Behavior | macOS]  Terminal-pasted ClickFix: decode-and-pipe-to-shell, quarantine stripping
+//     Requires Defender for Endpoint on macOS. MITRE: T1204.004, T1059.004, T1553.001
+// -------------------------------------------------------------------------------------
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where InitiatingProcessFileName in~ ("Terminal", "zsh", "bash", "sh")
+| where (ProcessCommandLine has_any ("base64 -d", "base64 --decode", "gunzip")
+         and ProcessCommandLine matches regex @"\|\s*(sh|bash|zsh)\b")
+     or (ProcessCommandLine has "xattr" and ProcessCommandLine matches regex @"xattr\s+(-c|-cr|-d\s+com\.apple\.quarantine)")
+     or (ProcessCommandLine has "curl" and ProcessCommandLine matches regex @"curl[^|]*\|\s*(sh|bash|zsh)\b")
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessCommandLine
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// Q9  [IoC/Content]  PowerShell script-block telemetry containing SmartRAT markers (MDE)
+//     Works when the decrypted RAT runs in memory; the script text still reaches ScriptBlock logging.
+// -------------------------------------------------------------------------------------
+DeviceEvents
+| where Timestamp > ago(30d)
+| where ActionType == "PowerShellCommand"
+| extend Cmd = tostring(parse_json(AdditionalFields).Command)
+| where Cmd has_any ("SMART_V25", "Initialize-xVxIaX", "Start-LXqXSB", "MicrosoftEdgeUpdateCore",
+                     "iuhbdaubdvauygd5562", "WinEUpjgHelper", "QRDetector")
+| project Timestamp, DeviceName, InitiatingProcessAccountName, Cmd = substring(Cmd, 0, 400)
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// Q10 [IoC | Email & web]  Users who received or clicked lure/C2 domains (Defender for Office 365)
+// -------------------------------------------------------------------------------------
+let IOC_Domains = dynamic([
+    "windowsupdate-cdn.com", "cartaobb.com", "crefisa.online", "vfsgloball.net",
+    "js-static.cfd", "api-com.cfd", "cf-id.com",
+    "ratonvaquero2026.online", "monteviral2026.duckdns.org", "osogransd.online", "ssinvestigaciones.com"
+]);
+union
+(
+    EmailUrlInfo
+    | where Timestamp > ago(30d)
+    | where UrlDomain has_any (IOC_Domains) or Url has_any (IOC_Domains)
+    | project Timestamp, Signal = "EmailUrl", NetworkMessageId, Url, UrlDomain
+),
+(
+    UrlClickEvents
+    | where Timestamp > ago(30d)
+    | where Url has_any (IOC_Domains)
+    | project Timestamp, Signal = "UrlClick", NetworkMessageId, Url, AccountUpn
+)
+| order by Timestamp desc
+
+
+// -------------------------------------------------------------------------------------
+// Q11 [Sentinel / ASIM]  IoC match across non-Microsoft sources (proxy, firewall, DNS)
+//     Uses ASIM parser filtering parameters; confirm they exist in your workspace version.
+// -------------------------------------------------------------------------------------
+let IOC_IPs = dynamic(["64.95.13.238", "162.141.111.227", "68.211.161.46", "216.250.112.100"]);
+let IOC_Domains = dynamic([
+    "windowsupdate-cdn.com", "cartaobb.com", "crefisa.online", "vfsgloball.net",
+    "js-static.cfd", "api-com.cfd", "cf-id.com",
+    "ratonvaquero2026.online", "monteviral2026.duckdns.org", "osogransd.online", "ssinvestigaciones.com"
+]);
+union
+(
+    _Im_NetworkSession(starttime = ago(30d), endtime = now(), dstipaddr_has_any_prefix = IOC_IPs)
+    | project TimeGenerated, Signal = "NetworkSession", SrcIpAddr, Indicator = tostring(DstIpAddr), EventProduct
+),
+(
+    _Im_WebSession(starttime = ago(30d), endtime = now(), url_has_any = IOC_Domains)
+    | project TimeGenerated, Signal = "WebSession", SrcIpAddr, Indicator = Url, EventProduct
+),
+(
+    _Im_Dns(starttime = ago(30d), endtime = now(), domain_has_any = IOC_Domains)
+    | project TimeGenerated, Signal = "Dns", SrcIpAddr, Indicator = DnsQuery, EventProduct
+)
+| order by TimeGenerated desc
+
+
+// -------------------------------------------------------------------------------------
+// Q12 [Sentinel | no MDE]  Windows PowerShell 4104 script-block events with SmartRAT markers
+//     Requires "PowerShell Script Block Logging" + the Operational log collected into `Event`.
+// -------------------------------------------------------------------------------------
+Event
+| where TimeGenerated > ago(30d)
+| where Source == "Microsoft-Windows-PowerShell" and EventID == 4104
+| where RenderedDescription has_any ("SMART_V25", "Initialize-xVxIaX", "Start-LXqXSB",
+                                     "MicrosoftEdgeUpdateCore", "iuhbdaubdvauygd5562")
+| project TimeGenerated, Computer, UserName, Snippet = substring(RenderedDescription, 0, 400)
+| order by TimeGenerated desc

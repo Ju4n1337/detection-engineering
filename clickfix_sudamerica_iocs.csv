@@ -1,0 +1,32 @@
+indicator,type,context,source,source_date,in_90d_window,region_focus,confidence,notes
+cartaobb.com,domain,ClickFix lure impersonating Brazilian bank (SmartRAT chain),Zscaler ThreatLabz,2026-06-17,no,Brazil,high,Typosquat of official bank domain; fake Cloudflare CAPTCHA + fake BSOD
+crefisa.online,domain,Fraudulent domain (SmartRAT campaign),Zscaler ThreatLabz,2026-06-17,no,Brazil,high,
+vfsgloball.net,domain,Fraudulent domain (SmartRAT campaign),Zscaler ThreatLabz,2026-06-17,no,Brazil,medium,Listed by Zscaler as fraudulent; not tied to a specific lure in the post
+windowsupdate-cdn.com,domain,SmartRAT C2 (c.windowsupdate-cdn.com),Zscaler ThreatLabz,2026-06-17,no,Brazil,high,Primary C2; TCP/51888 raw socket with AES-CBC framing
+64.95.13.238,ipv4,SmartRAT staging (st.txt and payload.php over HTTP),Zscaler ThreatLabz,2026-06-17,no,Brazil,high,
+162.141.111.227,ipv4,SmartRAT fallback C2 (TCP/51888),Zscaler ThreatLabz,2026-06-17,no,Brazil,high,
+http://64.95.13.238/st.txt,url,ClickFix stage 1 (iex(irm ...)),Zscaler ThreatLabz,2026-06-17,no,Brazil,high,
+http://64.95.13.238/payload.php,url,Stage 2 AES-encrypted PowerShell RAT blob,Zscaler ThreatLabz,2026-06-17,no,Brazil,high,
+297eb45f028d44d750297d2f932b9c91,md5,st.txt dropper,Zscaler ThreatLabz,2026-06-17,no,Brazil,high,Script hash as published (MD5)
+6bf4d4c62b5138ace281ce3d08297787,md5,payload.php,Zscaler ThreatLabz,2026-06-17,no,Brazil,high,
+3c72e1f37f115b00c3ad6ed31bacfe8a,md5,SmartRAT PowerShell,Zscaler ThreatLabz,2026-06-17,no,Brazil,high,
+b17ccdb5531555e43f082d6e77c07227,md5,SmartRAT PowerShell,Zscaler ThreatLabz,2026-06-17,no,Brazil,high,
+51888,port,SmartRAT C2 TCP port,Zscaler ThreatLabz,2026-06-17,no,Brazil,medium,Port alone is weak; use with powershell.exe as initiating process
+C:\Users\Public\Documents\msedge.txt,file_path,Decoy-named stage 2 script,Zscaler ThreatLabz,2026-06-17,no,Brazil,high,
+%APPDATA%\Microsoft\Diagnosis\ETW\msedgeupdate.txt,file_path,SmartRAT persistent copy,Zscaler ThreatLabz,2026-06-17,no,Brazil,high,
+%APPDATA%\Microsoft\Diagnosis\ETW\client_debug.log,file_path,SmartRAT debug log,Zscaler ThreatLabz,2026-06-17,no,Brazil,high,Fallbacks: C:\ProgramData and %TEMP%
+etw.dat / install.token,file_name,SmartRAT identity token files,Zscaler ThreatLabz,2026-06-17,no,Brazil,high,
+MicrosoftEdgeUpdateCore,persistence_name,Scheduled task + Run value + Windows service name,Zscaler ThreatLabz,2026-06-17,no,Brazil,high,Masquerades as Edge updater; service installed under %ProgramData%\Microsoft\Diagnosis\ETW\
+SMART_V25,string,SmartRAT execution marker,Zscaler ThreatLabz,2026-06-17,no,Brazil,high,
+js-static.cfd,domain,Hosts script + assets for fake Cloudflare verification on compromised sites,SANS ISC (via CyberSecurityNews),2026-10-28,yes,Global (not SA-specific),medium,Final payload not recovered; use URLscan to pivot to more compromised sites
+api-com.cfd,domain,Windows ClickFix command URL (returned 403 on 2026-10-28),SANS ISC (via CyberSecurityNews),2026-10-28,yes,Global (not SA-specific),medium,Path /7ge0w58tzzjsv9
+cf-id.com,domain,macOS ClickFix command URL (did not resolve on 2026-10-28),SANS ISC (via CyberSecurityNews),2026-10-28,yes,Global (not SA-specific),medium,Query ?ray-id=nz0ovm2jq2g68i
+js-static.cfd/embed.js?v=24,url_path,First script in the chain,SANS ISC (via CyberSecurityNews),2026-10-28,yes,Global (not SA-specific),medium,Also /api/s/{on|hit|tz|geo|ip|boot|wait|st} and /api/track/event
+ratonvaquero2026.online,domain,ClickFix / file host (Mexican banking fraud kit REF6045),Elastic Security Labs (via CyberSecurityNews),~2026-07-08,no,Mexico (LATAM-adjacent),medium,Not South America; included for regional coverage
+monteviral2026.duckdns.org,domain,ClickFix / file host (REF6045),Elastic Security Labs (via CyberSecurityNews),~2026-07-08,no,Mexico (LATAM-adjacent),medium,
+osogransd.online,domain,ClickFix / file host (REF6045),Elastic Security Labs (via CyberSecurityNews),~2026-07-08,no,Mexico (LATAM-adjacent),medium,
+ssinvestigaciones.com,domain,Post-CAPTCHA tracking endpoint (REF6045),Elastic Security Labs (via CyberSecurityNews),~2026-07-08,no,Mexico (LATAM-adjacent),medium,
+68.211.161.46,ipv4,ClickFix / file host (REF6045),Elastic Security Labs (via CyberSecurityNews),~2026-07-08,no,Mexico (LATAM-adjacent),medium,
+216.250.112.100,ipv4,ClickFix / file host (REF6045),Elastic Security Labs (via CyberSecurityNews),~2026-07-08,no,Mexico (LATAM-adjacent),medium,
+144.126.140.33,ipv4,C2 of Brazilian ClickFix banking operation (Chrome extension stealer),OTX pulse (community),2026-04-14,no,Brazil,low,Unvalidated community pulse; verify before blocking
+C:\ProgramData\Prodclear,file_path,Pirated NetSupport RMM install dir (finger.exe ClickFix),Huntress (via RST Cloud summary),2026-10-21,yes,Global (not SA-specific),medium,Secondary source; verify against Huntress post
